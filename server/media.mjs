@@ -1,13 +1,15 @@
 import { randomUUID } from 'node:crypto';
-import { chmod, copyFile, mkdir, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { chmod, copyFile, mkdir, mkdtemp, readFile, realpath, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { extname, isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { CommandError, HttpError, isSafeId, probeMedia, runCommand, sanitizeDisplayName } from './utils.mjs';
+import { CommandError, createAbortError, HttpError, isSafeId, probeMedia, runCommand, sanitizeDisplayName } from './utils.mjs';
 
 const PROJECT_ROOT = fileURLToPath(new URL('../', import.meta.url));
 export const MAX_VIDEO_BYTES = 300 * 1024 * 1024;
 export const MAX_AUDIO_BYTES = 40 * 1024 * 1024;
 export const MAX_MEDIA_DURATION = 1800;
+export const MAX_YOUTUBE_COOKIES_BYTES = 128 * 1024;
 
 const VIDEO_EXTENSIONS = new Set(['.mp4', '.m4v', '.mov', '.webm', '.mkv', '.avi', '.mpeg', '.mpg', '.3gp']);
 const AUDIO_EXTENSIONS = new Set(['.mp3', '.wav', '.m4a', '.aac', '.ogg', '.opus', '.flac']);
@@ -29,6 +31,68 @@ const MIME_TYPES = {
   '.opus': 'audio/ogg',
   '.flac': 'audio/flac',
 };
+
+const NETSCAPE_COOKIE_HEADERS = new Set(['# Netscape HTTP Cookie File', '# HTTP Cookie File']);
+const YOUTUBE_COOKIE_DOMAIN = /^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)*youtube\.com$/i;
+const COOKIE_NAME = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/;
+const COOKIE_CONTROL_CHARACTERS = /[\u0000-\u001f\u007f]/;
+
+export function normalizeYoutubeCookies(value) {
+  if (typeof value !== 'string') {
+    throw new HttpError(400, 'Provide a Netscape cookies.txt export for youtube.com only.');
+  }
+  if (Buffer.byteLength(value, 'utf8') > MAX_YOUTUBE_COOKIES_BYTES) {
+    throw new HttpError(413, 'YouTube cookies must be 128 KB or smaller.');
+  }
+
+  const lines = value.replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n').split('\n');
+  const header = lines[0];
+  if (!NETSCAPE_COOKIE_HEADERS.has(header)) {
+    throw new HttpError(400, 'Provide a Netscape-format cookies.txt export for youtube.com.');
+  }
+
+  const cookieRows = [];
+  for (const line of lines.slice(1)) {
+    if (!line.trim() || (line.trimStart().startsWith('#') && !line.startsWith('#HttpOnly_'))) continue;
+    const fields = line.split('\t');
+    if (fields.length !== 7) {
+      throw new HttpError(400, 'The cookies file is malformed. Export a Netscape-format cookies.txt file for youtube.com.');
+    }
+
+    const domain = fields[0].startsWith('#HttpOnly_') ? fields[0].slice('#HttpOnly_'.length) : fields[0];
+    const normalizedDomain = domain.startsWith('.') ? domain.slice(1) : domain;
+    if (!YOUTUBE_COOKIE_DOMAIN.test(normalizedDomain)) {
+      throw new HttpError(400, 'Export youtube.com cookies only; cookies for other domains are not accepted.');
+    }
+
+    const [domainFlag, path, secureFlag, expiration, name] = fields.slice(1, 6);
+    const normalizedDomainFlag = domainFlag.toUpperCase();
+    const normalizedSecureFlag = secureFlag.toUpperCase();
+    const hasValidFlags = /^(?:TRUE|FALSE)$/.test(normalizedDomainFlag)
+      && normalizedDomainFlag === (domain.startsWith('.') ? 'TRUE' : 'FALSE')
+      && /^(?:TRUE|FALSE)$/.test(normalizedSecureFlag);
+    const hasValidExpiration = expiration === ''
+      || (/^\d+(?:\.\d+)?$/.test(expiration) && Number.isFinite(Number(expiration)));
+    if (
+      fields.some((field) => COOKIE_CONTROL_CHARACTERS.test(field))
+      || !hasValidFlags
+      || !path.startsWith('/')
+      || !hasValidExpiration
+      || (name !== '' && !COOKIE_NAME.test(name))
+    ) {
+      throw new HttpError(400, 'The cookies file is malformed. Export a Netscape-format cookies.txt file for youtube.com.');
+    }
+
+    fields[1] = normalizedDomainFlag;
+    fields[3] = normalizedSecureFlag;
+    cookieRows.push(fields.join('\t'));
+  }
+
+  if (!cookieRows.length) {
+    throw new HttpError(400, 'The cookies file contains no YouTube cookies. Export youtube.com cookies only.');
+  }
+  return header + '\n' + cookieRows.join('\n') + '\n';
+}
 
 function inside(root, candidate) {
   const relativePath = relative(root, candidate);
@@ -116,6 +180,7 @@ export async function createMediaService(options = {}) {
   const uploadDir = join(dataDir, 'tmp', 'uploads');
   const publicMediaDir = join(publicDir, 'media');
   const manifestPath = join(dataDir, 'media-manifest.json');
+  const runYtDlp = options.ytDlpRunner ?? runCommand;
 
   await mkdir(dataDir, { recursive: true, mode: 0o700 });
   await Promise.all([
@@ -468,13 +533,27 @@ export async function createMediaService(options = {}) {
     return await registerFile(sourcePath, name, kind, true);
   }
 
-  async function importYoutube(value) {
+  async function importYoutube(value, importOptions = {}) {
     const parsed = parseYoutubeUrl(value);
     if (!parsed) throw new HttpError(400, 'Use a single-video YouTube watch, Shorts, or youtu.be URL.');
+    const cookies = importOptions.cookies === undefined ? undefined : normalizeYoutubeCookies(importOptions.cookies);
+    const signal = importOptions.signal;
+    if (signal?.aborted) throw createAbortError();
+
     const workDir = join(uploadDir, 'youtube-' + randomUUID());
-    await mkdir(workDir, { recursive: true });
+    let cookieDir;
     try {
-      await runCommand('yt-dlp', [
+      let cookiePath;
+      if (cookies !== undefined) {
+        cookieDir = await mkdtemp(join(tmpdir(), 'cutline-youtube-cookies-'));
+        await chmod(cookieDir, 0o700);
+        cookiePath = join(cookieDir, 'cookies.txt');
+        await writeFile(cookiePath, cookies, { encoding: 'utf8', flag: 'wx', mode: 0o600 });
+        await chmod(cookiePath, 0o600);
+      }
+
+      await mkdir(workDir, { recursive: true, mode: 0o700 });
+      const args = [
         '--ignore-config',
         '--js-runtimes', `node:${process.execPath}`,
         '--no-playlist',
@@ -493,8 +572,31 @@ export async function createMediaService(options = {}) {
         '--format', 'bestvideo[ext=mp4][height<=1080]+bestaudio[ext=m4a]/best[ext=mp4]/best',
         '--merge-output-format', 'mp4',
         '--output', join(workDir, 'source.%(ext)s'),
-        parsed.url,
-      ], { timeoutMs: 10 * 60_000, maxStdoutBytes: 4_000, maxStderrBytes: 8_000 });
+      ];
+      if (cookiePath) args.push('--cookies', cookiePath);
+      args.push(parsed.url);
+
+      try {
+        await runYtDlp('yt-dlp', args, {
+          timeoutMs: 10 * 60_000,
+          maxStdoutBytes: 4_000,
+          maxStderrBytes: 8_000,
+          signal,
+        });
+      } catch (error) {
+        if (signal?.aborted || error?.name === 'AbortError') throw createAbortError();
+        if (error instanceof CommandError && error.code === 'ENOENT') {
+          throw new HttpError(503, 'YouTube import is unavailable because yt-dlp is not installed.', { cause: error });
+        }
+        if (cookies !== undefined) {
+          throw new HttpError(422, 'YouTube could not use the supplied cookies or provide this video. Cookies may be expired or rejected, and they do not guarantee access if YouTube blocks this server. Upload a local copy you have permission to use instead.', { cause: error });
+        }
+        throw new HttpError(422, 'YouTube could not provide this video. It may require sign-in or block this server. Upload a local copy you have permission to use instead.', { cause: error });
+      } finally {
+        if (cookieDir) await rm(cookieDir, { recursive: true, force: true }).catch(() => {});
+      }
+
+      if (signal?.aborted) throw createAbortError();
 
       const files = await readdir(workDir);
       const downloaded = files
@@ -504,14 +606,11 @@ export async function createMediaService(options = {}) {
       const info = await stat(downloaded[0]);
       if (info.size > MAX_VIDEO_BYTES) throw new HttpError(413, 'Videos must be 300 MB or smaller.');
       return await registerFile(downloaded[0], 'YouTube video ' + parsed.videoId, 'video', true);
-    } catch (error) {
-      if (error instanceof HttpError) throw error;
-      if (error instanceof CommandError && error.code === 'ENOENT') {
-        throw new HttpError(503, 'YouTube import is unavailable because yt-dlp is not installed.', { cause: error });
-      }
-      throw new HttpError(422, 'YouTube could not provide this video. It may require sign-in or block this server. Upload a local copy you have permission to use instead.', { cause: error });
     } finally {
-      await rm(workDir, { recursive: true, force: true }).catch(() => {});
+      await Promise.all([
+        rm(workDir, { recursive: true, force: true }).catch(() => {}),
+        cookieDir ? rm(cookieDir, { recursive: true, force: true }).catch(() => {}) : Promise.resolve(),
+      ]);
     }
   }
 

@@ -2855,6 +2855,64 @@ textarea::placeholder {
 .youtube-form > .button {
   margin-top: 19px;
 }
+.youtube-cookies {
+  margin-top: 15px;
+  border: 1px solid #e0e9d5;
+  border-radius: 9px;
+  background: #f5f8ef;
+  overflow: hidden;
+}
+.youtube-cookies-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 13px;
+  color: #677e51;
+  text-align: left;
+  font-size: 11px;
+}
+.youtube-cookies-toggle small {
+  margin-left: auto;
+  font-size: 9px;
+  color: #7d906a;
+}
+.youtube-cookies-toggle[aria-expanded="true"] > svg:last-child {
+  transform: rotate(180deg);
+}
+#youtube-cookies-options {
+  padding: 0 13px 14px;
+}
+#youtube-cookies-options > .help-text:first-child {
+  margin-top: 0;
+  color: #70845d;
+}
+.youtube-cookie-file {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 11px;
+}
+.youtube-cookie-file > .button {
+  flex: 1;
+  min-width: 0;
+  justify-content: flex-start;
+}
+.youtube-cookie-file > .button span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.youtube-cookie-file svg {
+  flex-shrink: 0;
+}
+.cookie-privacy {
+  color: #78856a;
+}
+.cookie-guide {
+  margin-top: 9px;
+  font-size: 10px;
+}
 .error-box {
   font-size: 11px;
   line-height: 1.7;

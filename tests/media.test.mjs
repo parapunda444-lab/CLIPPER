@@ -1,12 +1,17 @@
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
-import { copyFile, mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { copyFile, mkdtemp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { after, test } from 'node:test';
 import { createApp } from '../server/index.mjs';
-import { createMediaService, isAllowedYoutubeUrl } from '../server/media.mjs';
-import { HttpError, probeMedia, runCommand, sendFileRange } from '../server/utils.mjs';
+import {
+  createMediaService,
+  isAllowedYoutubeUrl,
+  MAX_YOUTUBE_COOKIES_BYTES,
+  normalizeYoutubeCookies,
+} from '../server/media.mjs';
+import { CommandError, createAbortError, HttpError, probeMedia, runCommand, sendFileRange } from '../server/utils.mjs';
 
 const temporaryRoots = [];
 
@@ -40,8 +45,179 @@ async function makeAudio(filePath, duration = 1.8) {
   ], { timeoutMs: 30_000 });
 }
 
+async function assertCookieTempRemoved(cookiePath) {
+  await assert.rejects(stat(cookiePath), (error) => error.code === 'ENOENT');
+  await assert.rejects(stat(dirname(cookiePath)), (error) => error.code === 'ENOENT');
+}
+
 after(async () => {
   await Promise.all(temporaryRoots.map((root) => rm(root, { recursive: true, force: true })));
+});
+
+test('YouTube cookies accept Netscape files, HttpOnly rows, BOM, and Windows newlines', () => {
+  const raw = '\uFEFF# Netscape HTTP Cookie File\r\n'
+    + '.youtube.com\tTRUE\t/\tTRUE\t0\tSID\tsynthetic-session\r\n'
+    + '#HttpOnly_.youtube.com\tTRUE\t/\tTRUE\t1893456000\t__Secure-1PSID\tsynthetic-http-only\r\n';
+  assert.equal(
+    normalizeYoutubeCookies(raw),
+    '# Netscape HTTP Cookie File\n'
+      + '.youtube.com\tTRUE\t/\tTRUE\t0\tSID\tsynthetic-session\n'
+      + '#HttpOnly_.youtube.com\tTRUE\t/\tTRUE\t1893456000\t__Secure-1PSID\tsynthetic-http-only\n',
+  );
+  assert.equal(
+    normalizeYoutubeCookies('# HTTP Cookie File\nm.youtube.com\tFALSE\t/\tFALSE\t0\tPREF\tvalue'),
+    '# HTTP Cookie File\nm.youtube.com\tFALSE\t/\tFALSE\t0\tPREF\tvalue\n',
+  );
+  assert.equal(
+    normalizeYoutubeCookies('# Netscape HTTP Cookie File\nyoutube.com\tFALSE\t/\tTRUE\t\tSESSION\tvalue'),
+    '# Netscape HTTP Cookie File\nyoutube.com\tFALSE\t/\tTRUE\t\tSESSION\tvalue\n',
+  );
+  assert.equal(
+    normalizeYoutubeCookies('# Netscape HTTP Cookie File\n.youtube.com\tTRUE\t/\tTRUE\t1893456000.5\tSID\tvalue'),
+    '# Netscape HTTP Cookie File\n.youtube.com\tTRUE\t/\tTRUE\t1893456000.5\tSID\tvalue\n',
+  );
+});
+
+test('YouTube cookies reject malformed, foreign-host, and oversized input without echoing it', () => {
+  for (const value of [
+    null,
+    '{"cookies":[]}',
+    'SID=synthetic-session; PREF=value',
+    '# Netscape HTTP Cookie File\n.youtube.com\tTRUE\t/\tTRUE\t0\tSID',
+    '# Netscape HTTP Cookie File\n.youtube.com\tMAYBE\t/\tTRUE\t0\tSID\tvalue',
+    '# Netscape HTTP Cookie File\nm.youtube.com\tTRUE\t/\tTRUE\t0\tSID\tvalue',
+    '# Netscape HTTP Cookie File\n.youtube.com\tFALSE\t/\tTRUE\t0\tSID\tvalue',
+    '# Netscape HTTP Cookie File\n#HttpOnly_youtube.com\tTRUE\t/\tTRUE\t0\tSID\tvalue',
+    '# Netscape HTTP Cookie File\n# exported file with no cookies',
+  ]) {
+    assert.throws(normalizeYoutubeCookies.bind(null, value), (error) => error instanceof HttpError && error.status === 400);
+  }
+
+  for (const domain of ['example.com', 'youtube.com.evil.test', 'notyoutube.com']) {
+    const foreign = '# Netscape HTTP Cookie File\n'
+      + domain + '\tTRUE\t/\tTRUE\t0\tSID\tforeign-secret';
+    assert.throws(normalizeYoutubeCookies.bind(null, foreign), (error) => (
+      error instanceof HttpError
+      && error.status === 400
+      && /youtube\.com (?:cookies )?only/i.test(error.message)
+      && !error.message.includes('foreign-secret')
+    ));
+  }
+
+  assert.throws(
+    normalizeYoutubeCookies.bind(null, 'x'.repeat(MAX_YOUTUBE_COOKIES_BYTES + 1)),
+    (error) => error instanceof HttpError && error.status === 413 && !error.message.includes('x'.repeat(32)),
+  );
+  assert.throws(
+    normalizeYoutubeCookies.bind(null, '# Netscape HTTP Cookie File\n.youtube.com\tTRUE\t/\tTRUE\t0\tSID\t' + '€'.repeat(MAX_YOUTUBE_COOKIES_BYTES / 2)),
+    (error) => error instanceof HttpError && error.status === 413,
+  );
+});
+
+test('YouTube imports keep cookies private and remove them after success, failure, and abort', async () => {
+  const root = await temporaryRoot();
+  const dataDir = join(root, 'data');
+  const source = join(root, 'source.mp4');
+  const cookieText = '# Netscape HTTP Cookie File\n.youtube.com\tTRUE\t/\tTRUE\t0\tSID\tsynthetic-session\n';
+  const normalizedCookies = normalizeYoutubeCookies(cookieText);
+  await makeVideo(source);
+
+  let behavior = 'success';
+  let abortStarted;
+  let abortSeen;
+  const abortStartedPromise = new Promise((resolve) => { abortStarted = resolve; });
+  const abortSeenPromise = new Promise((resolve) => { abortSeen = resolve; });
+  const cookiePaths = [];
+  const media = await createMediaService({
+    dataDir,
+    ytDlpRunner: async (command, args, options) => {
+      assert.equal(command, 'yt-dlp');
+      const cookiesIndex = args.indexOf('--cookies');
+      assert.notEqual(cookiesIndex, -1);
+      const cookiePath = args[cookiesIndex + 1];
+      cookiePaths.push(cookiePath);
+      assert.equal(args.includes('synthetic-session'), false);
+      assert.equal(cookiePath.startsWith(join(dataDir, 'tmp') + '/'), false);
+      assert.equal((await stat(dirname(cookiePath))).mode & 0o777, 0o700);
+      assert.equal((await stat(cookiePath)).mode & 0o777, 0o600);
+      assert.equal(await readFile(cookiePath, 'utf8'), normalizedCookies);
+
+      if (behavior === 'failure') {
+        throw new CommandError('The downloader failed.', { stderr: 'Sign in to confirm access.' });
+      }
+      if (behavior === 'timeout') {
+        return await runCommand(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
+          ...options,
+          timeoutMs: 25,
+        });
+      }
+      if (behavior === 'abort') {
+        abortStarted();
+        await new Promise((resolve, reject) => {
+          const onAbort = () => {
+            abortSeen();
+            reject(createAbortError());
+          };
+          options.signal.addEventListener('abort', onAbort, { once: true });
+          if (options.signal.aborted) onAbort();
+        });
+        return;
+      }
+
+      const outputPath = args[args.indexOf('--output') + 1].replace('%(ext)s', 'mp4');
+      await copyFile(source, outputPath);
+      return { stdout: '', stderr: '' };
+    },
+  });
+
+  const imported = await media.importYoutube('https://youtu.be/jNQXAC9IVRw', { cookies: cookieText });
+  assert.equal(imported.name, 'YouTube video jNQXAC9IVRw.mp4');
+  await assertCookieTempRemoved(cookiePaths[0]);
+  const manifestText = await readFile(join(dataDir, 'media-manifest.json'), 'utf8');
+  assert.equal(manifestText.includes('synthetic-session'), false);
+
+  behavior = 'failure';
+  await assert.rejects(
+    media.importYoutube('https://youtu.be/jNQXAC9IVRw', { cookies: cookieText }),
+    (error) => error instanceof HttpError
+      && error.status === 422
+      && /expired or rejected/i.test(error.message)
+      && !error.message.includes('Sign in to confirm'),
+  );
+  await assertCookieTempRemoved(cookiePaths[1]);
+
+  behavior = 'timeout';
+  await assert.rejects(
+    media.importYoutube('https://youtu.be/jNQXAC9IVRw', { cookies: cookieText }),
+    (error) => error instanceof HttpError
+      && error.status === 422
+      && error.cause instanceof CommandError
+      && error.cause.timedOut
+      && !error.message.includes('synthetic-session'),
+  );
+  await assertCookieTempRemoved(cookiePaths[2]);
+
+  behavior = 'abort';
+  const controller = new AbortController();
+  const pendingImport = media.importYoutube('https://youtu.be/jNQXAC9IVRw', {
+    cookies: cookieText,
+    signal: controller.signal,
+  });
+  await abortStartedPromise;
+  controller.abort();
+  await assert.rejects(pendingImport, (error) => error.name === 'AbortError');
+  await abortSeenPromise;
+  await assertCookieTempRemoved(cookiePaths[3]);
+});
+
+test('runCommand kills its child when its AbortSignal is triggered', async () => {
+  const controller = new AbortController();
+  const pending = runCommand(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
+    signal: controller.signal,
+    timeoutMs: 10_000,
+  });
+  setTimeout(() => controller.abort(), 25).unref?.();
+  await assert.rejects(pending, (error) => error.name === 'AbortError');
 });
 
 test('media IDs persist across restarts and support byte ranges without exposing paths', async (t) => {
@@ -197,7 +373,53 @@ test('media upload API validates content, persists assets, and returns JSON for 
     thumbnails: ['/media/demo-frame.jpg'],
   }));
 
-  const app = await createApp({ dataDir, publicDir, useVite: false });
+  const youtubeCookieText = '# Netscape HTTP Cookie File\n.youtube.com\tTRUE\t/\tTRUE\t0\tSID\tsynthetic-api-session\n';
+  let youtubeBehavior = 'success';
+  let youtubeCallCount = 0;
+  let resolveYoutubeStarted;
+  let resolveYoutubeAborted;
+  const youtubeStarted = new Promise((resolve) => { resolveYoutubeStarted = resolve; });
+  const youtubeAborted = new Promise((resolve) => { resolveYoutubeAborted = resolve; });
+  const youtubeCookiePaths = [];
+  const youtubeCookieContents = [];
+  const app = await createApp({
+    dataDir,
+    publicDir,
+    useVite: false,
+    ytDlpRunner: async (command, args, options) => {
+      assert.equal(command, 'yt-dlp');
+      youtubeCallCount += 1;
+      const cookiesIndex = args.indexOf('--cookies');
+      if (cookiesIndex === -1) {
+        youtubeCookieContents.push(null);
+      } else {
+        const cookiePath = args[cookiesIndex + 1];
+        youtubeCookiePaths.push(cookiePath);
+        youtubeCookieContents.push(await readFile(cookiePath, 'utf8'));
+        assert.equal(args.includes('synthetic-api-session'), false);
+      }
+
+      if (youtubeBehavior === 'abort') {
+        resolveYoutubeStarted();
+        await new Promise((resolve, reject) => {
+          const onAbort = () => {
+            resolveYoutubeAborted();
+            reject(createAbortError());
+          };
+          options.signal.addEventListener('abort', onAbort, { once: true });
+          if (options.signal.aborted) onAbort();
+        });
+        return;
+      }
+      if (youtubeBehavior === 'failure') {
+        throw new CommandError('The downloader failed.', { stderr: 'Sign in to confirm access.' });
+      }
+
+      const outputPath = args[args.indexOf('--output') + 1].replace('%(ext)s', 'mp4');
+      await copyFile(source, outputPath);
+      return { stdout: '', stderr: '' };
+    },
+  });
   const server = app.listen(0, '127.0.0.1');
   await new Promise((resolve) => server.once('listening', resolve));
   t.after(async () => {
@@ -274,4 +496,88 @@ test('media upload API validates content, persists assets, and returns JSON for 
     }),
   });
   assert.equal(deniedPlaylist.status, 400);
+
+  const postYoutube = (payload, options = {}) => fetch(base + '/api/media/youtube', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(payload),
+    ...options,
+  });
+  const headerCookies = await postYoutube({
+    url: 'https://youtu.be/jNQXAC9IVRw',
+    rightsConfirmed: true,
+    cookies: 'SID=private-cookie-value; Domain=.youtube.com',
+  });
+  assert.equal(headerCookies.status, 400);
+  assert.equal((await headerCookies.json()).error.includes('private-cookie-value'), false);
+  const objectCookies = await postYoutube({
+    url: 'https://youtu.be/jNQXAC9IVRw',
+    rightsConfirmed: true,
+    cookies: { SID: 'private-cookie-value' },
+  });
+  assert.equal(objectCookies.status, 400);
+  assert.match((await objectCookies.json()).error, /Netscape-format cookies\.txt/i);
+  const foreignCookies = await postYoutube({
+    url: 'https://youtu.be/jNQXAC9IVRw',
+    rightsConfirmed: true,
+    cookies: '# Netscape HTTP Cookie File\nexample.com\tTRUE\t/\tTRUE\t0\tSID\tforeign-value',
+  });
+  assert.equal(foreignCookies.status, 400);
+  assert.match((await foreignCookies.json()).error, /youtube\.com (?:cookies )?only/i);
+  const oversizedCookies = await postYoutube({
+    url: 'https://youtu.be/jNQXAC9IVRw',
+    rightsConfirmed: true,
+    cookies: 'x'.repeat(MAX_YOUTUBE_COOKIES_BYTES + 1),
+  });
+  assert.equal(oversizedCookies.status, 413);
+  assert.equal(youtubeCallCount, 0);
+
+  const legacyImport = await postYoutube({ url: 'https://youtu.be/jNQXAC9IVRw', rightsConfirmed: true });
+  assert.equal(legacyImport.status, 201);
+  assert.equal(youtubeCallCount, 1);
+  assert.equal(youtubeCookieContents[0], null);
+
+  const cookieImport = await postYoutube({
+    url: 'https://youtu.be/jNQXAC9IVRw',
+    rightsConfirmed: true,
+    cookies: youtubeCookieText,
+  });
+  assert.equal(cookieImport.status, 201);
+  assert.equal(youtubeCallCount, 2);
+  assert.equal(youtubeCookieContents[1], normalizeYoutubeCookies(youtubeCookieText));
+  await assertCookieTempRemoved(youtubeCookiePaths[0]);
+
+  youtubeBehavior = 'failure';
+  const failedImport = await postYoutube({
+    url: 'https://youtu.be/jNQXAC9IVRw',
+    rightsConfirmed: true,
+    cookies: youtubeCookieText,
+  });
+  assert.equal(failedImport.status, 422);
+  const failedImportMessage = (await failedImport.json()).error;
+  assert.match(failedImportMessage, /expired or rejected/i);
+  assert.doesNotMatch(failedImportMessage, /Sign in to confirm|synthetic-api-session/);
+  await assertCookieTempRemoved(youtubeCookiePaths[1]);
+
+  youtubeBehavior = 'abort';
+  const requestController = new AbortController();
+  const disconnectedImport = postYoutube({
+    url: 'https://youtu.be/jNQXAC9IVRw',
+    rightsConfirmed: true,
+    cookies: youtubeCookieText,
+  }, { signal: requestController.signal });
+  await youtubeStarted;
+  requestController.abort();
+  await assert.rejects(disconnectedImport, (error) => error.name === 'AbortError');
+  await youtubeAborted;
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    try {
+      await stat(youtubeCookiePaths[2]);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    } catch (error) {
+      assert.equal(error.code, 'ENOENT');
+      break;
+    }
+  }
+  await assertCookieTempRemoved(youtubeCookiePaths[2]);
 });
