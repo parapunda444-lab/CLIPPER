@@ -1,0 +1,369 @@
+import { useRef, useState } from "react";
+import {
+  AudioLines,
+  Captions,
+  Check,
+  ChevronDown,
+  Crop,
+  Layers2,
+  LoaderCircle,
+  Maximize,
+  Mic2,
+  Music2,
+  Plus,
+  RectangleHorizontal,
+  RectangleVertical,
+  SlidersHorizontal,
+  Square,
+  ThumbsUp,
+  Upload,
+  Volume2,
+  X,
+  Youtube,
+} from "lucide-react";
+import type {
+  Asset,
+  Aspect,
+  Effect,
+  Project,
+  Settings,
+  SubtitleStyle,
+} from "../types";
+import { effects } from "../lib/editor";
+import { upload } from "../lib/api";
+
+export function Inspector({
+  project,
+  onSettings,
+  onMusic,
+  onVoice,
+  onNotify,
+  demoMusic,
+}: {
+  project: Project;
+  onSettings: (s: Partial<Settings>) => void;
+  onMusic: (a: Asset, projectId: string) => void;
+  onVoice: () => void;
+  onNotify: (message: string) => void;
+  demoMusic?: Asset;
+}) {
+  const s = project.settings;
+  const musicFile = useRef<HTMLInputElement>(null);
+  const [audioOpen, setAudioOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  async function addMusic(file?: File) {
+    if (!file) return;
+    if (file.size > 40 * 1024 * 1024) {
+      onNotify("Choose an audio file smaller than 40 MB.");
+      return;
+    }
+    setBusy(true);
+    try {
+      const result = await upload<{ asset: Asset }>(
+        "/api/media/audio",
+        "audio",
+        file,
+      ).promise;
+      onMusic(result.asset, project.id);
+    } catch (e) {
+      onNotify((e as Error).message);
+    } finally {
+      setBusy(false);
+      if (musicFile.current) musicFile.current.value = "";
+    }
+  }
+  const ratios: [Aspect, string, typeof Square][] = [
+    ["9:16", "Portrait", RectangleVertical],
+    ["16:9", "Landscape", RectangleHorizontal],
+    ["1:1", "Square", Square],
+    ["original", "Original", Maximize],
+  ];
+  return (
+    <aside className="inspector">
+      <header>
+        <span>
+          <SlidersHorizontal size={16} /> Make it yours
+        </span>
+        <span className="mini-badge">EDIT</span>
+      </header>
+      <div className="inspector-scroll">
+        <section className="inspector-section">
+          <h3>
+            <Crop size={14} /> Canvas <span>Aspect ratio</span>
+          </h3>
+          <div className="aspect-options">
+            {ratios.map(([value, label, Icon]) => (
+              <button
+                key={value}
+                className={s.aspect === value ? "selected" : ""}
+                onClick={() => onSettings({ aspect: value })}
+                aria-label={`${label} ${value}`}
+                aria-pressed={s.aspect === value}
+              >
+                <Icon size={19} />
+                <b>{value === "original" ? "Auto" : value}</b>
+                <span>{label}</span>
+              </button>
+            ))}
+          </div>
+          {s.aspect !== "original" && (
+            <label className="slider-label crop-position">
+              <span>
+                Reframe{" "}
+                <small>
+                  {s.cropX < 40 ? "Left" : s.cropX > 60 ? "Right" : "Center"}
+                </small>
+              </span>
+              <input
+                type="range"
+                min="0"
+                max="100"
+                value={s.cropX}
+                aria-label="Horizontal crop position"
+                onChange={(e) => onSettings({ cropX: Number(e.target.value) })}
+              />
+            </label>
+          )}
+        </section>
+        <section className="inspector-section">
+          <h3>
+            <Captions size={15} /> Captions{" "}
+            <button
+              role="switch"
+              aria-checked={s.showCaptions}
+              aria-label="Show captions"
+              className={`switch ${s.showCaptions ? "on" : ""}`}
+              onClick={() => onSettings({ showCaptions: !s.showCaptions })}
+            >
+              <span />
+            </button>
+          </h3>
+          <div className={`caption-presets ${!s.showCaptions ? "faded" : ""}`}>
+            {(["pop", "clean", "outline"] as SubtitleStyle[]).map((style) => (
+              <button
+                key={style}
+                className={s.subtitleStyle === style ? "selected" : ""}
+                onClick={() =>
+                  onSettings({ subtitleStyle: style, showCaptions: true })
+                }
+                aria-label={`${style} caption style`}
+              >
+                <span className={`style-preview style-${style}`}>Aa</span>
+                <small>
+                  {style === "pop"
+                    ? "Pop"
+                    : style === "clean"
+                      ? "Clean"
+                      : "Outline"}
+                </small>
+                {s.subtitleStyle === style && <Check size={10} />}
+              </button>
+            ))}
+          </div>
+        </section>
+        <section className="inspector-section">
+          <h3>
+            <Layers2 size={14} /> Color & mood
+          </h3>
+          <div className="effect-options">
+            {(["none", "cinematic", "vivid", "mono", "warm"] as Effect[]).map(
+              (effect) => (
+                <button
+                  key={effect}
+                  className={s.effect === effect ? "selected" : ""}
+                  onClick={() => onSettings({ effect })}
+                  aria-label={`${effect} effect`}
+                  aria-pressed={s.effect === effect}
+                >
+                  <span style={{ filter: effects[effect] }}>
+                    {project.asset.thumbnail ? (
+                      <img src={project.asset.thumbnail} alt="" />
+                    ) : (
+                      <span className="effect-fallback" />
+                    )}
+                  </span>
+                  <small>
+                    {effect === "none"
+                      ? "Original"
+                      : effect === "cinematic"
+                        ? "Cinema"
+                        : effect === "mono"
+                          ? "B&W"
+                          : effect[0].toUpperCase() + effect.slice(1)}
+                  </small>
+                </button>
+              ),
+            )}
+          </div>
+        </section>
+        <section className="inspector-section">
+          <h3>
+            <Plus size={14} /> A little nudge <span>Call to action</span>
+          </h3>
+          <div className="callout-options">
+            <button
+              className={s.callout === "subscribe" ? "selected" : ""}
+              aria-pressed={s.callout === "subscribe"}
+              onClick={() =>
+                onSettings({
+                  callout: s.callout === "subscribe" ? "none" : "subscribe",
+                })
+              }
+            >
+              <Youtube size={15} /> Subscribe{" "}
+              {s.callout === "subscribe" && <Check size={12} />}
+            </button>
+            <button
+              className={s.callout === "like" ? "selected" : ""}
+              aria-pressed={s.callout === "like"}
+              onClick={() =>
+                onSettings({ callout: s.callout === "like" ? "none" : "like" })
+              }
+            >
+              <ThumbsUp size={14} /> Like{" "}
+              {s.callout === "like" && <Check size={12} />}
+            </button>
+          </div>
+        </section>
+        <section className="inspector-section audio-section">
+          <h3>
+            <AudioLines size={15} /> Sound good.
+          </h3>
+          <button
+            className="audio-control"
+            onClick={() => setAudioOpen(!audioOpen)}
+            aria-expanded={audioOpen}
+          >
+            <span className="audio-icon">
+              <Music2 size={15} />
+            </span>
+            <span>
+              <b>{s.musicId ? project.music?.name : "Background music"}</b>
+              <small>
+                {s.musicId ? "Added to your clip" : "Set the right feeling"}
+              </small>
+            </span>
+            <ChevronDown size={14} className={audioOpen ? "rotate" : ""} />
+          </button>
+          {audioOpen && (
+            <div className="audio-picker">
+              {demoMusic && (
+                <button
+                  onClick={() => {
+                    onMusic(demoMusic, project.id);
+                    setAudioOpen(false);
+                  }}
+                >
+                  <Music2 size={14} />
+                  <span>
+                    Quiet mornings<small>Original ambient · included</small>
+                  </span>
+                  {s.musicId === demoMusic.id && <Check size={13} />}
+                </button>
+              )}
+              <button
+                disabled={busy}
+                onClick={() => musicFile.current?.click()}
+              >
+                {busy ? (
+                  <LoaderCircle size={14} className="spin" />
+                ) : (
+                  <Upload size={14} />
+                )}{" "}
+                Upload your own music
+              </button>
+            </div>
+          )}
+          <input
+            className="sr-only"
+            ref={musicFile}
+            type="file"
+            accept="audio/*"
+            aria-label="Upload background music"
+            onChange={(e) => void addMusic(e.target.files?.[0])}
+          />
+          {s.musicId && (
+            <div className="attached-audio">
+              <label className="slider-label">
+                <span>
+                  Music <small>{Math.round(s.musicVolume * 100)}%</small>
+                </span>
+                <input
+                  type="range"
+                  min="0"
+                  max="100"
+                  value={s.musicVolume * 100}
+                  aria-label="Music volume"
+                  onChange={(e) =>
+                    onSettings({ musicVolume: Number(e.target.value) / 100 })
+                  }
+                />
+              </label>
+              <button
+                className="icon-button"
+                aria-label="Remove music"
+                onClick={() => onSettings({ musicId: null })}
+              >
+                <X size={13} />
+              </button>
+            </div>
+          )}
+          <button className="audio-control" onClick={onVoice}>
+            <span className="audio-icon lilac">
+              <Mic2 size={15} />
+            </span>
+            <span>
+              <b>{s.voiceId ? "Voiceover added" : "AI voiceover"}</b>
+              <small>
+                {s.voiceId ? project.voice?.name : "Find your signature voice"}
+              </small>
+            </span>
+            <Plus size={14} />
+          </button>
+          {s.voiceId && (
+            <div className="attached-audio">
+              <label className="slider-label">
+                <span>
+                  Voice <small>{Math.round(s.voiceVolume * 100)}%</small>
+                </span>
+                <input
+                  type="range"
+                  min="0"
+                  max="100"
+                  value={s.voiceVolume * 100}
+                  aria-label="Voiceover volume"
+                  onChange={(e) =>
+                    onSettings({ voiceVolume: Number(e.target.value) / 100 })
+                  }
+                />
+              </label>
+              <button
+                className="icon-button"
+                aria-label="Remove voiceover"
+                onClick={() => onSettings({ voiceId: null })}
+              >
+                <X size={13} />
+              </button>
+            </div>
+          )}
+          <label className="slider-label source-volume">
+            <span>
+              <Volume2 size={12} /> Original audio{" "}
+              <small>{Math.round(s.sourceVolume * 100)}%</small>
+            </span>
+            <input
+              type="range"
+              min="0"
+              max="100"
+              value={s.sourceVolume * 100}
+              aria-label="Original audio volume"
+              onChange={(e) =>
+                onSettings({ sourceVolume: Number(e.target.value) / 100 })
+              }
+            />
+          </label>
+        </section>
+      </div>
+    </aside>
+  );
+}
