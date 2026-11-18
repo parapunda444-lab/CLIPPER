@@ -22,6 +22,12 @@ export class CommandError extends Error {
   }
 }
 
+export function createAbortError() {
+  const error = new Error('The operation was aborted.');
+  error.name = 'AbortError';
+  return error;
+}
+
 export function isSafeId(value) {
   return typeof value === 'string' && /^[A-Za-z0-9_-]{1,80}$/.test(value);
 }
@@ -42,6 +48,8 @@ export async function runCommand(command, args, options = {}) {
   const timeoutMs = options.timeoutMs ?? 30_000;
   const maxStdoutBytes = options.maxStdoutBytes ?? 1_000_000;
   const maxStderrBytes = options.maxStderrBytes ?? 64_000;
+  const signal = options.signal;
+  if (signal?.aborted) throw createAbortError();
 
   return await new Promise((resolve, reject) => {
     let child;
@@ -63,9 +71,20 @@ export async function runCommand(command, args, options = {}) {
     let stderrSize = 0;
     let callbackError;
     let timedOut = false;
+    let aborted = false;
     let settled = false;
+    let timer;
+    const abortListener = () => {
+      if (settled || aborted) return;
+      aborted = true;
+      child.kill('SIGKILL');
+    };
+    const cleanup = () => {
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', abortListener);
+    };
 
-    const timer = setTimeout(() => {
+    timer = setTimeout(() => {
       timedOut = true;
       child.kill('SIGKILL');
     }, timeoutMs);
@@ -100,16 +119,19 @@ export async function runCommand(command, args, options = {}) {
     child.once('error', (error) => {
       if (settled) return;
       settled = true;
-      clearTimeout(timer);
-      reject(new CommandError('Could not start the media tool.', { code: error.code }));
+      cleanup();
+      if (aborted || signal?.aborted) reject(createAbortError());
+      else reject(new CommandError('Could not start the media tool.', { code: error.code }));
     });
 
     child.once('close', (code, signal) => {
       if (settled) return;
       settled = true;
-      clearTimeout(timer);
+      cleanup();
       const errorText = stderr.toString('utf8').slice(-maxStderrBytes);
-      if (callbackError) {
+      if (aborted || options.signal?.aborted) {
+        reject(createAbortError());
+      } else if (callbackError) {
         reject(callbackError);
       } else if (timedOut) {
         reject(new CommandError('The media tool took too long to finish.', { code, signal, stderr: errorText, timedOut: true }));
@@ -119,6 +141,11 @@ export async function runCommand(command, args, options = {}) {
         resolve({ stdout: stdout.toString('utf8'), stderr: errorText });
       }
     });
+
+    if (signal) {
+      signal.addEventListener('abort', abortListener, { once: true });
+      if (signal.aborted) abortListener();
+    }
   });
 }
 

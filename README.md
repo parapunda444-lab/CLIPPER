@@ -24,11 +24,19 @@ The demo is bundled; regeneration downloads licensed footage only if its prepare
 
 ## Editing
 
-- Import a local video (up to 300 MB / 30 minutes), or an individual YouTube video you have permission to use. Private, age-restricted, unavailable or platform-blocked videos cannot be imported; uploading a permitted local copy remains available.
+- Import a local video (up to 300 MB / 30 minutes), or an individual YouTube video you have permission to use. Optional sign-in cookies are supported; unavailable or platform-blocked videos may still fail. Uploading a permitted local copy remains available.
 - Scrub and play the source, choose trim points, reframe portrait/landscape/square/original, apply color effects, and add a Like or Subscribe overlay.
 - Import SRT/WebVTT, edit captions and timestamps, choose caption styles, or download subtitles with times relative to the selected clip.
 - Mix source audio with the included music, uploaded music/voice recordings, or optional AI voiceovers.
 - Export clips from 0.25 to 180 seconds as real H.264/AAC MP4s. Portrait is 720×1280, landscape 1280×720, square 720×720; original ratio is fitted within 1080px. Captions and overlays are burned in. Completed renders remain in the Exports library.
+
+### YouTube sign-in cookies
+
+In **New project → YouTube link → YouTube cookies**, choose your own `cookies.txt` export when YouTube asks you to sign in. Use Netscape/Mozilla format, up to 128 KB, containing only `youtube.com` cookies (including its subdomains). JSON exports and pasted browser Cookie headers are not supported. See the [official yt-dlp YouTube cookie guide](https://github.com/yt-dlp/yt-dlp/wiki/Extractors#exporting-youtube-cookies) for exporting the file; browser-wide exports can include credentials for unrelated websites and must not be used here.
+
+Cookies are account credentials: never share them in chat, commit them to GitHub, or use someone else's session. Only import them into a server you trust. The file is sent to the server running Cutline (your PC when running locally), used by yt-dlp for that import, and removed from temporary storage when the operation finishes or is cancelled. It is not saved with projects or in browser storage. Select the file again for each attempt. Keep your original export secure and delete it when no longer needed; common cookie-export filenames are excluded from Git.
+
+Cookies can expire or rotate, do not grant rights to a video, and do not guarantee that YouTube will allow a download. Using an account with yt-dlp can carry account restrictions or suspension risk; use cookies only when needed. No browser cookies are extracted automatically.
 
 ## Optional AI
 
