@@ -1,0 +1,293 @@
+import { useEffect, useRef, useState } from "react";
+import type { RefObject } from "react";
+import {
+  Check,
+  Maximize2,
+  Pause,
+  Play,
+  RotateCcw,
+  SkipBack,
+  SkipForward,
+  Volume2,
+  VolumeX,
+  Youtube,
+  ThumbsUp,
+} from "lucide-react";
+import type { Project } from "../types";
+import { clamp, effects, timeLabel } from "../lib/editor";
+
+export function Player({
+  project,
+  videoRef,
+  currentTime,
+  playing,
+  onTime,
+  onPlaying,
+  onSeek,
+  onToggle,
+}: {
+  project: Project;
+  videoRef: RefObject<HTMLVideoElement | null>;
+  currentTime: number;
+  playing: boolean;
+  onTime: (time: number) => void;
+  onPlaying: (playing: boolean) => void;
+  onSeek: (time: number) => void;
+  onToggle: () => void;
+}) {
+  const { settings: s, asset } = project;
+  const frame = useRef<HTMLDivElement>(null);
+  const music = useRef<HTMLAudioElement>(null);
+  const voice = useRef<HTMLAudioElement>(null);
+  const [muted, setMuted] = useState(false);
+  const [error, setError] = useState("");
+  const [rate, setRate] = useState(1);
+  const caption = s.showCaptions
+    ? project.captions.find(
+        (c) => currentTime >= c.start && currentTime < c.end,
+      )
+    : null;
+  const aspect =
+    s.aspect === "original"
+      ? (asset.width || 16) / (asset.height || 9)
+      : s.aspect === "9:16"
+        ? 9 / 16
+        : s.aspect === "16:9"
+          ? 16 / 9
+          : 1;
+  useEffect(() => {
+    setError("");
+  }, [asset.url]);
+  useEffect(() => {
+    const v = videoRef.current;
+    if (v) {
+      v.volume = s.sourceVolume;
+      v.muted = muted;
+      v.playbackRate = rate;
+    }
+    if (music.current) {
+      music.current.volume = s.musicVolume;
+      music.current.muted = muted;
+      music.current.playbackRate = rate;
+    }
+    if (voice.current) {
+      voice.current.volume = s.voiceVolume;
+      voice.current.muted = muted;
+      voice.current.playbackRate = rate;
+    }
+  }, [
+    s.sourceVolume,
+    s.musicVolume,
+    s.voiceVolume,
+    s.musicId,
+    s.voiceId,
+    muted,
+    rate,
+    videoRef,
+  ]);
+  useEffect(() => {
+    const elapsed = Math.max(0, currentTime - s.start);
+    for (const [audio, isMusic] of [
+      [music.current, true],
+      [voice.current, false],
+    ] as const) {
+      if (!audio || !Number.isFinite(audio.duration) || audio.duration <= 0)
+        continue;
+      const position = isMusic
+        ? elapsed % audio.duration
+        : Math.min(elapsed, audio.duration);
+      if (Math.abs(audio.currentTime - position) > 0.3)
+        audio.currentTime = position;
+      if (playing && (isMusic || elapsed < audio.duration)) {
+        if (audio.paused) void audio.play().catch(() => {});
+      } else audio.pause();
+    }
+  }, [currentTime, playing, s.start, s.musicId, s.voiceId]);
+  useEffect(() => {
+    const v = videoRef.current;
+    if (v && (v.currentTime < s.start || v.currentTime >= s.end)) {
+      v.currentTime = s.start;
+      onTime(s.start);
+    }
+  }, [s.start, s.end, videoRef, onTime]);
+  const fullscreen = async () => {
+    try {
+      if (document.fullscreenElement) await document.exitFullscreen();
+      else await frame.current?.requestFullscreen();
+    } catch {
+      setError("Fullscreen is unavailable in this browser.");
+    }
+  };
+  return (
+    <section className="player-card" aria-label="Video preview">
+      <header className="player-heading">
+        <span>
+          <span className="status-dot" /> Live preview
+        </span>
+        <div>
+          <span className="format-badge">
+            {s.aspect === "original" ? "Original" : s.aspect}
+          </span>
+          <span className="preview-quality">{asset.height || 720}p</span>
+        </div>
+      </header>
+      <div className="preview-stage" ref={frame}>
+        <div
+          className={`video-frame ${aspect > 1 ? "wide-frame" : ""}`}
+          style={
+            {
+              aspectRatio: aspect,
+              "--video-ratio": aspect,
+              "--caption-size":
+                aspect < 1 ? "7.6cqw" : aspect > 1 ? "4cqw" : "5.8cqw",
+            } as React.CSSProperties
+          }
+        >
+          <video
+            ref={videoRef}
+            src={asset.url}
+            poster={asset.thumbnail}
+            playsInline
+            preload="auto"
+            style={{
+              objectPosition: `${s.cropX}% center`,
+              filter: effects[s.effect],
+            }}
+            onClick={onToggle}
+            onLoadedMetadata={() => {
+              if (videoRef.current) {
+                videoRef.current.currentTime = s.start;
+                onTime(s.start);
+              }
+            }}
+            onTimeUpdate={() => {
+              const v = videoRef.current;
+              if (!v) return;
+              if (v.currentTime >= s.end) {
+                v.pause();
+                if (v.currentTime > s.end + 0.2) v.currentTime = s.end;
+                onTime(s.end);
+              } else onTime(v.currentTime);
+            }}
+            onPlay={() => onPlaying(true)}
+            onPause={() => onPlaying(false)}
+            onEnded={() => onPlaying(false)}
+            onError={() =>
+              setError(
+                "This video could not be played. Try re-uploading it as an MP4.",
+              )
+            }
+          />
+          {s.callout !== "none" && (
+            <div className={`video-callout ${s.callout}`}>
+              {s.callout === "subscribe" ? (
+                <Youtube size={15} />
+              ) : (
+                <ThumbsUp size={13} />
+              )}{" "}
+              {s.callout === "subscribe" ? "SUBSCRIBE" : "Like this video"}
+            </div>
+          )}
+          {caption && (
+            <div className={`video-caption caption-${s.subtitleStyle}`}>
+              {caption.text}
+            </div>
+          )}
+          {!playing && !error && (
+            <button
+              className="stage-play"
+              aria-label="Play preview"
+              onClick={onToggle}
+            >
+              <Play size={24} fill="currentColor" />
+            </button>
+          )}
+          {error && (
+            <div className="video-error">
+              <p>{error}</p>
+              <button
+                className="button secondary"
+                onClick={() => {
+                  setError("");
+                  videoRef.current?.load();
+                }}
+              >
+                <RotateCcw size={14} /> Retry
+              </button>
+            </div>
+          )}
+        </div>
+        <span className="safe-area-label">
+          <Check size={11} />{" "}
+          {s.aspect === "9:16"
+            ? "Shorts & Reels ready"
+            : s.aspect === "16:9"
+              ? "YouTube ready"
+              : s.aspect === "1:1"
+                ? "Feed ready"
+                : "Original framing"}
+        </span>
+        <button
+          className="fullscreen-button"
+          onClick={() => void fullscreen()}
+          aria-label="Fullscreen preview"
+        >
+          <Maximize2 size={16} />
+        </button>
+      </div>
+      <div className="player-controls">
+        <button
+          className="icon-button"
+          aria-label={muted ? "Unmute preview" : "Mute preview"}
+          onClick={() => setMuted(!muted)}
+        >
+          {muted ? <VolumeX size={17} /> : <Volume2 size={17} />}
+        </button>
+        <div className="playback-group">
+          <button
+            className="icon-button"
+            aria-label="Back 5 seconds"
+            onClick={() => onSeek(clamp(currentTime - 5, s.start, s.end))}
+          >
+            <SkipBack size={16} />
+          </button>
+          <button
+            className="play-button"
+            aria-label={playing ? "Pause video" : "Play video"}
+            onClick={onToggle}
+          >
+            {playing ? (
+              <Pause size={18} fill="currentColor" />
+            ) : (
+              <Play size={18} fill="currentColor" />
+            )}
+          </button>
+          <button
+            className="icon-button"
+            aria-label="Forward 5 seconds"
+            onClick={() => onSeek(clamp(currentTime + 5, s.start, s.end))}
+          >
+            <SkipForward size={16} />
+          </button>
+        </div>
+        <div className="play-time">
+          {timeLabel(Math.max(0, currentTime - s.start))}
+          <span> / {timeLabel(s.end - s.start)}</span>
+          <button
+            className="speed-button"
+            aria-label="Change playback speed"
+            onClick={() => setRate(rate === 1 ? 1.5 : rate === 1.5 ? 2 : 1)}
+          >
+            {rate}×
+          </button>
+        </div>
+      </div>
+      {project.music && s.musicId && (
+        <audio ref={music} src={project.music.url} preload="auto" loop />
+      )}
+      {project.voice && s.voiceId && (
+        <audio ref={voice} src={project.voice.url} preload="auto" />
+      )}
+    </section>
+  );
+}
