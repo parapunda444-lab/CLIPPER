@@ -7,3 +7,5 @@ dist/
 .hoplite/artifacts/
 .hoplite/attachments/
 *.tsbuildinfo
+*cookies*.txt
+*cookies*.json

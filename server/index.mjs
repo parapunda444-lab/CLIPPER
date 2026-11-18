@@ -12,7 +12,10 @@ import { createMediaService, MAX_AUDIO_BYTES, MAX_VIDEO_BYTES } from './media.mj
 import { HttpError, sendFileRange } from './utils.mjs';
 
 const PROJECT_ROOT = fileURLToPath(new URL('../', import.meta.url));
-const youtubeBodySchema = z.object({ url: z.string().min(1).max(2048) }).strict();
+const youtubeBodySchema = z.object({
+  url: z.string().min(1).max(2048),
+  cookies: z.string().optional(),
+});
 
 function mergeDemoAsset(metadata, registered) {
   const result = { ...registered, ...(metadata && typeof metadata === 'object' && !Array.isArray(metadata) ? metadata : {}) };
@@ -83,7 +86,7 @@ export async function createApp(options = {}) {
   const publicDir = resolve(options.publicDir ?? join(PROJECT_ROOT, 'public'));
   const distDir = resolve(options.distDir ?? join(PROJECT_ROOT, 'dist'));
   const useVite = options.useVite ?? process.env.NODE_ENV !== 'production';
-  const mediaService = await createMediaService({ dataDir, publicDir });
+  const mediaService = await createMediaService({ dataDir, publicDir, ytDlpRunner: options.ytDlpRunner });
   const exportService = await createExportService({ dataDir, mediaService });
   const app = express();
 
@@ -158,16 +161,33 @@ export async function createApp(options = {}) {
   });
 
   app.post('/api/media/youtube', async (req, res, next) => {
+    const controller = new AbortController();
+    const abortRequest = () => controller.abort();
+    const abortOnResponseClose = () => {
+      if (!res.writableEnded) abortRequest();
+    };
+    req.once('aborted', abortRequest);
+    res.once('close', abortOnResponseClose);
     try {
       if (req.body?.rightsConfirmed !== true) {
         throw new HttpError(400, 'Confirm that you have the rights to use this video.');
       }
-      const parsed = youtubeBodySchema.safeParse({ url: req.body?.url });
-      if (!parsed.success) throw new HttpError(400, 'Provide a single-video YouTube watch, Shorts, or youtu.be URL.');
-      const asset = await mediaService.importYoutube(parsed.data.url);
-      res.status(201).json({ asset });
+      const parsed = youtubeBodySchema.safeParse({ url: req.body?.url, cookies: req.body?.cookies });
+      if (!parsed.success) {
+        const invalidCookies = parsed.error.issues.some((issue) => issue.path[0] === 'cookies');
+        if (invalidCookies) throw new HttpError(400, 'Provide a Netscape-format cookies.txt export for youtube.com only.');
+        throw new HttpError(400, 'Provide a single-video YouTube watch, Shorts, or youtu.be URL.');
+      }
+      const asset = await mediaService.importYoutube(parsed.data.url, {
+        cookies: parsed.data.cookies,
+        signal: controller.signal,
+      });
+      if (!controller.signal.aborted && !res.destroyed) res.status(201).json({ asset });
     } catch (error) {
-      next(error);
+      if (!controller.signal.aborted) next(error);
+    } finally {
+      req.removeListener('aborted', abortRequest);
+      res.removeListener('close', abortOnResponseClose);
     }
   });
 
