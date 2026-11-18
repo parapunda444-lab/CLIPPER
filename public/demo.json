@@ -1,0 +1,323 @@
+{
+  "asset": {
+    "id": "demo-nature-film",
+    "name": "A little room to breathe.mp4",
+    "url": "/media/demo.mp4",
+    "duration": 93.582,
+    "width": 1280,
+    "height": 720,
+    "thumbnail": "/media/demo-poster.jpg",
+    "hasAudio": true
+  },
+  "captions": [
+    {
+      "id": "demo-caption-01",
+      "start": 0.35,
+      "end": 5.1,
+      "text": "Some mornings ask only that we arrive."
+    },
+    {
+      "id": "demo-caption-02",
+      "start": 6.17,
+      "end": 10.92,
+      "text": "The first light takes its time."
+    },
+    {
+      "id": "demo-caption-03",
+      "start": 11.99,
+      "end": 16.74,
+      "text": "A narrow path is still a way forward."
+    },
+    {
+      "id": "demo-caption-04",
+      "start": 17.81,
+      "end": 22.56,
+      "text": "Clouds loosen their hold, one ridge at a time."
+    },
+    {
+      "id": "demo-caption-05",
+      "start": 23.63,
+      "end": 28.38,
+      "text": "There is room here for a slower thought."
+    },
+    {
+      "id": "demo-caption-06",
+      "start": 29.45,
+      "end": 34.2,
+      "text": "Below, the forest gathers the light."
+    },
+    {
+      "id": "demo-caption-07",
+      "start": 35.27,
+      "end": 40.02,
+      "text": "Every shade of green has somewhere to go."
+    },
+    {
+      "id": "demo-caption-08",
+      "start": 41.09,
+      "end": 45.84,
+      "text": "The canopy rolls on, soft as a held breath."
+    },
+    {
+      "id": "demo-caption-09",
+      "start": 46.91,
+      "end": 51.66,
+      "text": "Even the farthest edge feels close enough."
+    },
+    {
+      "id": "demo-caption-10",
+      "start": 52.73,
+      "end": 57.48,
+      "text": "A little distance can change the day."
+    },
+    {
+      "id": "demo-caption-11",
+      "start": 58.55,
+      "end": 63.3,
+      "text": "We follow the quiet until it opens."
+    },
+    {
+      "id": "demo-caption-12",
+      "start": 64.37,
+      "end": 69.12,
+      "text": "The mountains keep their own time."
+    },
+    {
+      "id": "demo-caption-13",
+      "start": 70.19,
+      "end": 74.94,
+      "text": "A small figure crosses a very wide world."
+    },
+    {
+      "id": "demo-caption-14",
+      "start": 76.01,
+      "end": 80.76,
+      "text": "The ground rises, and the mind softens."
+    },
+    {
+      "id": "demo-caption-15",
+      "start": 81.83,
+      "end": 86.58,
+      "text": "Keep the moment; leave the hurry behind."
+    },
+    {
+      "id": "demo-caption-16",
+      "start": 87.65,
+      "end": 92.4,
+      "text": "There is still time to breathe."
+    }
+  ],
+  "clips": [
+    {
+      "id": "quiet-open",
+      "title": "A little room to breathe",
+      "description": "A calm alpine opening that drifts into the forest canopy.",
+      "start": 8,
+      "end": 68,
+      "score": 0.94,
+      "tags": [
+        "calm",
+        "mountains",
+        "forest"
+      ],
+      "poster": "/media/clip-mountain.jpg"
+    },
+    {
+      "id": "forest-canopy",
+      "title": "Where the forest opens",
+      "description": "A slow aerial passage through warm autumn color.",
+      "start": 20,
+      "end": 80,
+      "score": 0.88,
+      "tags": [
+        "forest",
+        "aerial",
+        "autumn"
+      ],
+      "poster": "/media/clip-canopy.jpg"
+    },
+    {
+      "id": "wide-world",
+      "title": "The long way home",
+      "description": "A wide landscape with one small traveler in the frame.",
+      "start": 31.5,
+      "end": 91.5,
+      "score": 0.84,
+      "tags": [
+        "wander",
+        "quiet",
+        "valley"
+      ],
+      "poster": "/media/clip-trail.jpg"
+    }
+  ],
+  "heatmap": [
+    {
+      "start": 0,
+      "end": 3.9,
+      "score": 0.48,
+      "reason": "Demo example: Gentle opening frame"
+    },
+    {
+      "start": 3.9,
+      "end": 7.8,
+      "score": 0.52,
+      "reason": "Demo example: First wide mountain reveal"
+    },
+    {
+      "start": 7.8,
+      "end": 11.7,
+      "score": 0.58,
+      "reason": "Demo example: Slow cloud movement"
+    },
+    {
+      "start": 11.7,
+      "end": 15.6,
+      "score": 0.63,
+      "reason": "Demo example: Quiet valley detail"
+    },
+    {
+      "start": 15.6,
+      "end": 19.5,
+      "score": 0.71,
+      "reason": "Demo example: Transition toward the tree line"
+    },
+    {
+      "start": 19.5,
+      "end": 23.4,
+      "score": 0.83,
+      "reason": "Demo example: Forest canopy opens"
+    },
+    {
+      "start": 23.4,
+      "end": 27.29,
+      "score": 0.77,
+      "reason": "Demo example: Soft autumn color"
+    },
+    {
+      "start": 27.29,
+      "end": 31.19,
+      "score": 0.74,
+      "reason": "Demo example: Steady aerial movement"
+    },
+    {
+      "start": 31.19,
+      "end": 35.09,
+      "score": 0.8,
+      "reason": "Demo example: A lighter patch in the canopy"
+    },
+    {
+      "start": 35.09,
+      "end": 38.99,
+      "score": 0.87,
+      "reason": "Demo example: Broad forest texture"
+    },
+    {
+      "start": 38.99,
+      "end": 42.89,
+      "score": 0.92,
+      "reason": "Demo example: Strongest scenic reveal"
+    },
+    {
+      "start": 42.89,
+      "end": 46.79,
+      "score": 0.88,
+      "reason": "Demo example: Long, calm sweep"
+    },
+    {
+      "start": 46.79,
+      "end": 50.69,
+      "score": 0.82,
+      "reason": "Demo example: A change in landscape"
+    },
+    {
+      "start": 50.69,
+      "end": 54.59,
+      "score": 0.85,
+      "reason": "Demo example: Open horizon"
+    },
+    {
+      "start": 54.59,
+      "end": 58.49,
+      "score": 0.9,
+      "reason": "Demo example: Return to the mountains"
+    },
+    {
+      "start": 58.49,
+      "end": 62.39,
+      "score": 0.94,
+      "reason": "Demo example: Clear mountain silhouette"
+    },
+    {
+      "start": 62.39,
+      "end": 66.29,
+      "score": 0.89,
+      "reason": "Demo example: A small human detail"
+    },
+    {
+      "start": 66.29,
+      "end": 70.19,
+      "score": 0.84,
+      "reason": "Demo example: Room to let the shot breathe"
+    },
+    {
+      "start": 70.19,
+      "end": 74.09,
+      "score": 0.79,
+      "reason": "Demo example: Late-story transition"
+    },
+    {
+      "start": 74.09,
+      "end": 77.99,
+      "score": 0.83,
+      "reason": "Demo example: Warm closing landscape"
+    },
+    {
+      "start": 77.99,
+      "end": 81.88,
+      "score": 0.88,
+      "reason": "Demo example: Quiet final passage"
+    },
+    {
+      "start": 81.88,
+      "end": 85.78,
+      "score": 0.93,
+      "reason": "Demo example: Wide closing view"
+    },
+    {
+      "start": 85.78,
+      "end": 89.68,
+      "score": 0.91,
+      "reason": "Demo example: Soft landing"
+    },
+    {
+      "start": 89.68,
+      "end": 93.58,
+      "score": 0.82,
+      "reason": "Demo example: Unhurried ending"
+    }
+  ],
+  "source": "demo",
+  "thumbnails": [
+    "/media/demo-thumb-01.jpg",
+    "/media/demo-thumb-02.jpg",
+    "/media/demo-thumb-03.jpg",
+    "/media/demo-thumb-04.jpg",
+    "/media/demo-thumb-05.jpg",
+    "/media/demo-thumb-06.jpg",
+    "/media/demo-thumb-07.jpg",
+    "/media/demo-thumb-08.jpg"
+  ],
+  "music": {
+    "id": "demo-music",
+    "name": "Quiet mornings",
+    "url": "/media/demo-music.wav",
+    "duration": 28,
+    "hasAudio": true
+  },
+  "demoNotes": {
+    "captions": "Original illustrative narration, not a transcript of spoken audio.",
+    "scores": "Illustrative sample only; not AI analysis or viewer data.",
+    "audio": "The video contains a quiet original instrumental bed and no spoken dialogue."
+  }
+}
