@@ -2,16 +2,22 @@ import { useEffect, useRef, useState } from "react";
 import {
   ArrowUpRight,
   Check,
+  ChevronDown,
+  FileText,
   Film,
   Link,
   LoaderCircle,
+  LockKeyhole,
   UploadCloud,
+  X,
   Youtube,
 } from "lucide-react";
 import { Modal } from "./Modal";
 import { api, upload } from "../lib/api";
 import { validYoutubeUrl } from "../lib/editor";
 import type { Asset } from "../types";
+
+const MAX_COOKIES_BYTES = 128 * 1024;
 
 export function ImportDialog({
   onClose,
@@ -29,7 +35,10 @@ export function ImportDialog({
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState("");
   const [drag, setDrag] = useState(false);
+  const [cookiesOpen, setCookiesOpen] = useState(false);
+  const [cookiesFile, setCookiesFile] = useState<File | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const cookiesRef = useRef<HTMLInputElement>(null);
   const abortRef = useRef<(() => void) | null>(null);
   useEffect(() => () => abortRef.current?.(), []);
   async function importFile(file?: File) {
@@ -58,7 +67,20 @@ export function ImportDialog({
       abortRef.current = null;
     }
   }
+  function selectCookies(file?: File) {
+    if (!file || busy) return;
+    setCookiesFile(null);
+    setError("");
+    if (!file.name.toLowerCase().endsWith(".txt")) {
+      setError("Choose a Netscape-format cookies.txt file, not a JSON export.");
+    } else if (!file.size || file.size > MAX_COOKIES_BYTES) {
+      setError("Choose a non-empty cookies.txt file up to 128 KB.");
+    } else {
+      setCookiesFile(file);
+    }
+  }
   async function importUrl() {
+    if (busy) return;
     if (!validYoutubeUrl(url)) {
       setError("Enter a valid YouTube video link, not a channel or playlist.");
       return;
@@ -72,9 +94,17 @@ export function ImportDialog({
     const controller = new AbortController();
     abortRef.current = () => controller.abort();
     try {
+      const cookies = cookiesFile ? await cookiesFile.text() : undefined;
+      controller.signal.throwIfAborted();
+      if (
+        cookies !== undefined &&
+        !/^\uFEFF?# (?:Netscape )?HTTP Cookie File\r?\n/.test(cookies)
+      ) {
+        throw new Error("Export youtube.com cookies in Netscape cookies.txt format.");
+      }
       const data = await api<{ asset: Asset }>(
         "/api/media/youtube",
-        { url, rightsConfirmed: true },
+        { url, rightsConfirmed: true, ...(cookies === undefined ? {} : { cookies }) },
         controller.signal,
       );
       onImported(data.asset);
@@ -82,6 +112,7 @@ export function ImportDialog({
       if ((e as Error).name !== "AbortError") setError((e as Error).message);
     } finally {
       setBusy(false);
+      setCookiesFile(null);
       abortRef.current = null;
     }
   }
@@ -99,6 +130,8 @@ export function ImportDialog({
           className={mode === "file" ? "active" : ""}
           onClick={() => {
             setMode("file");
+            setCookiesFile(null);
+            setCookiesOpen(false);
             setError("");
           }}
           disabled={busy}
@@ -181,6 +214,73 @@ export function ImportDialog({
               disabled={busy}
             />
           </div>
+          <section className="youtube-cookies">
+            <button
+              type="button"
+              className="youtube-cookies-toggle"
+              aria-expanded={cookiesOpen}
+              aria-controls="youtube-cookies-options"
+              onClick={() => setCookiesOpen(!cookiesOpen)}
+            >
+              <LockKeyhole size={15} />
+              <span>YouTube cookies</span>
+              <small>{cookiesFile ? "File selected" : "Optional"}</small>
+              <ChevronDown size={15} />
+            </button>
+            <div id="youtube-cookies-options" hidden={!cookiesOpen}>
+              <p className="help-text">
+                If YouTube asks you to sign in, select your own youtube.com
+                cookies.txt export. Netscape format only · Up to 128 KB.
+              </p>
+              <input
+                ref={cookiesRef}
+                type="file"
+                accept=".txt,text/plain"
+                className="sr-only"
+                aria-label="Upload YouTube cookies file"
+                disabled={busy}
+                onChange={(e) => {
+                  selectCookies(e.target.files?.[0]);
+                  e.target.value = "";
+                }}
+              />
+              <div className="youtube-cookie-file">
+                <button
+                  type="button"
+                  className="button secondary"
+                  disabled={busy}
+                  onClick={() => cookiesRef.current?.click()}
+                >
+                  <FileText size={15} />
+                  <span>{cookiesFile ? cookiesFile.name : "Choose cookies.txt"}</span>
+                </button>
+                {cookiesFile && (
+                  <button
+                    type="button"
+                    className="icon-button"
+                    aria-label="Remove cookies file"
+                    disabled={busy}
+                    onClick={() => setCookiesFile(null)}
+                  >
+                    <X size={16} />
+                  </button>
+                )}
+              </div>
+              <p className="help-text cookie-privacy">
+                Cookies can give access to your account. Only use a server you
+                trust. Sent to this app’s server for this import, then deleted;
+                never saved in your project. Select the file again to retry.
+              </p>
+              <a
+                className="text-button cookie-guide"
+                href="https://github.com/yt-dlp/yt-dlp/wiki/Extractors#exporting-youtube-cookies"
+                target="_blank"
+                rel="noreferrer"
+              >
+                How to export YouTube cookies <ArrowUpRight size={13} />
+              </a>
+            </div>
+          </section>
           <label className="checkbox-row">
             <input
               type="checkbox"
@@ -191,8 +291,8 @@ export function ImportDialog({
             <span>I own this video or have permission to edit it.</span>
           </label>
           <p className="help-text">
-            Public videos only. Some videos are restricted by YouTube; you can
-            always upload your original file instead.
+            Cookies may help with sign-in, but YouTube can still block downloads.
+            You can always upload a local copy you have permission to use.
           </p>
           <button
             className="button primary full"
